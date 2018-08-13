@@ -37,16 +37,18 @@ abstract class BaseRxClient(context: Context) {
 
     @Synchronized
     fun disconnect() {
-        Timber.d("disconnect")
-        if (isConnecting) {
-            isRequestDisconnect = true
-            return
+        synchronized(this@BaseRxClient) {
+            Timber.d("disconnect")
+            if (isConnecting) {
+                isRequestDisconnect = true
+                return
+            }
+            if (!isConnected) {
+                return
+            }
+            context.unbindService(serviceConnection)
+            onDisconnect()
         }
-        if (!isConnected) {
-            return
-        }
-        context.unbindService(serviceConnection)
-        onDisconnect()
     }
 
     protected open fun getAutoDisconnectTime(): Long {
