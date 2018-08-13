@@ -116,6 +116,7 @@ open abstract class BaseRxClient(context: Context) {
         uuidString = UUID.randomUUID().toString()
         isConnecting = false
         isConnected = false
+        isCounting = false
         for (request in observableRequestSet) {
             val e = RuntimeException("Service disconnected.")
             request.emitter.onError(e)
