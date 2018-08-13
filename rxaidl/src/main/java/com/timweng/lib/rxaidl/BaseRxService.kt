@@ -15,15 +15,15 @@ import java.lang.Exception
 
 open abstract class BaseRxService : Service() {
     private companion object {
-        var sRequestCount = 0L
+        var requestCount = 0L
     }
 
-    private var mClientDataManager: ClientDataManager = ClientDataManager()
-    private val mTempRid2ClientMap: MutableMap<Long, ClientData> = mutableMapOf()
-    private val mGson = Gson()
+    private var clientDataManager: ClientDataManager = ClientDataManager()
+    private val tempRid2ClientMap: MutableMap<Long, ClientData> = mutableMapOf()
+    private val gson = Gson()
 
     override fun onBind(intent: Intent?): IBinder {
-        return mBinder
+        return binder
     }
 
     override fun onCreate() {
@@ -33,16 +33,16 @@ open abstract class BaseRxService : Service() {
 
     override fun onDestroy() {
         Timber.d("onDestroy")
-        mClientDataManager.clearClient()
+        clientDataManager.clearClient()
         super.onDestroy()
     }
 
-    private val mBinder = object : IBaseInterface.Stub() {
+    private val binder = object : IBaseInterface.Stub() {
 
         override fun register(clientId: String, callback: IBaseCallback): Boolean {
             synchronized(this@BaseRxService) {
                 Timber.d("register: $clientId, $callback")
-                return mClientDataManager.addClient(clientId, callback)
+                return clientDataManager.addClient(clientId, callback)
             }
         }
 
@@ -52,22 +52,22 @@ open abstract class BaseRxService : Service() {
                 Timber.d("request: $clientId, $requestContent")
                 Timber.d("request: $requestClass, $callbackClass, $methodName")
 
-                var clientData = mClientDataManager.getClient(clientId)
+                var clientData = clientDataManager.getClient(clientId)
                 if (clientData != null) {
                     val cbClass: Class<*>? = ReflectionUtil.getClassFromName(callbackClass)
                     if (cbClass == null) {
-                        Timber.e("requestObservable failed: Can not find cbClass")
+                        Timber.e("requestObservable failed: Can not find callback Class")
                         return -1
                     }
-                    sRequestCount++
-                    mTempRid2ClientMap.put(sRequestCount, clientData)
-                    val isOk = onRequestObservable(sRequestCount, requestContent, requestClass, cbClass, methodName)
-                    mTempRid2ClientMap.remove(sRequestCount)
+                    requestCount++
+                    tempRid2ClientMap[requestCount] = clientData
+                    val isOk = onRequestObservable(requestCount, requestContent, requestClass, cbClass, methodName)
+                    tempRid2ClientMap.remove(requestCount)
                     if (!isOk) {
                         Timber.e("requestObservable failed: onRequestObservable error")
                         return -1
                     }
-                    return sRequestCount
+                    return requestCount
                 } else {
                     Timber.e("requestObservable failed: Can not find clientData")
                 }
@@ -78,7 +78,7 @@ open abstract class BaseRxService : Service() {
         override fun unregister(clientId: String): Boolean {
             synchronized(this@BaseRxService) {
                 Timber.d("unregister: $clientId")
-                return mClientDataManager.removeClient(clientId)
+                return clientDataManager.removeClient(clientId)
             }
         }
     }
@@ -94,7 +94,7 @@ open abstract class BaseRxService : Service() {
             return false
         }
 
-        var request = convertToObject(requestContent, requestClass)
+        var request = parseToObject(requestContent, requestClass)
         var observable: Observable<C>? = null
         try {
             observable = targetMethod.invoke(this, request) as Observable<C>
@@ -110,7 +110,7 @@ open abstract class BaseRxService : Service() {
     }
 
     private fun <C> connectObservable(requestId: Long, observable: Observable<C>, subscribeScheduler: Scheduler): Boolean {
-        val clientData: ClientData? = mTempRid2ClientMap.get(requestId)
+        val clientData: ClientData? = tempRid2ClientMap[requestId]
         val callback = clientData?.callback
         if (clientData == null || callback == null) {
             Timber.e("connectObservable failed: clientData = $clientData, callback = $clientData")
@@ -122,12 +122,12 @@ open abstract class BaseRxService : Service() {
                 synchronized(this@BaseRxService) {
                     try {
                         callback.onCallback(requestId, BaseConstant.STATE_COMPLETE, null)
-                        mClientDataManager.removeRequestId(requestId)
+                        clientDataManager.removeRequestId(requestId)
                     } catch (e: RemoteException) {
                         // connect to client error: remove the client
                         e.printStackTrace()
                         Timber.e("onComplete error: remove client ${clientData.id}")
-                        mClientDataManager.removeClient(clientData.id)
+                        clientDataManager.removeClient(clientData.id)
                     }
                 }
             }
@@ -135,12 +135,12 @@ open abstract class BaseRxService : Service() {
             override fun onNext(t: C) {
                 synchronized(this@BaseRxService) {
                     try {
-                        callback.onCallback(requestId, BaseConstant.STATE_NEXT, mGson.toJson(t))
+                        callback.onCallback(requestId, BaseConstant.STATE_NEXT, gson.toJson(t))
                     } catch (e: RemoteException) {
                         // connect to client error: remove the client
                         e.printStackTrace()
                         Timber.e("onNext error: remove client ${clientData.id}")
-                        mClientDataManager.removeClient(clientData.id)
+                        clientDataManager.removeClient(clientData.id)
                     }
                 }
             }
@@ -149,24 +149,27 @@ open abstract class BaseRxService : Service() {
                 synchronized(this@BaseRxService) {
                     try {
                         callback.onCallback(requestId, BaseConstant.STATE_ERROR, e.message)
-                        mClientDataManager.removeRequestId(requestId)
+                        clientDataManager.removeRequestId(requestId)
                     } catch (e: RemoteException) {
                         // connect to client error: remove the client
                         e.printStackTrace()
                         Timber.e("onError error: remove client ${clientData.id}")
-                        mClientDataManager.removeClient(clientData.id)
+                        clientDataManager.removeClient(clientData.id)
                     }
                 }
             }
         }
 
-        mClientDataManager.addRequestId(requestId, clientData.id, observer)
-        observable.subscribeOn(subscribeScheduler).observeOn(AndroidSchedulers.mainThread()).subscribe(observer)
+        val isOk = clientDataManager.addRequestId(requestId, clientData.id, observer)
+        if (isOk) {
+            observable.subscribeOn(subscribeScheduler).observeOn(AndroidSchedulers.mainThread()).subscribe(observer)
+            return true
+        }
 
-        return true
+        return false
     }
 
-    private fun <C> convertToObject(content: String, contentClass: Class<C>): C {
-        return mGson.fromJson(content, contentClass)
+    private fun <C> parseToObject(content: String, contentClass: Class<C>): C {
+        return gson.fromJson(content, contentClass)
     }
 }

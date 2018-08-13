@@ -10,7 +10,7 @@ import android.os.Looper
 import android.os.RemoteException
 import com.google.gson.Gson
 import io.reactivex.Observable
-import io.reactivex.subjects.PublishSubject
+import io.reactivex.ObservableEmitter
 import io.reactivex.subjects.Subject
 import timber.log.Timber
 import java.util.*
@@ -25,9 +25,9 @@ open abstract class BaseRxClient(context: Context) {
     private var isConnected = false
     private var isRequestDisconnect = false
 
-    private val subjectMap: MutableMap<Long, Subject<*>> = mutableMapOf()  // RequestId to Subject
-    private val classMap: MutableMap<Long, Class<*>> = mutableMapOf()      // RequestId to Callback Class
-    private val pendingRequestSet: MutableSet<PendingRequest> = mutableSetOf()
+    private val observableRequestSet: MutableSet<ObservableRequest> = mutableSetOf()
+    private val observableEmitterMap: MutableMap<Long, ObservableEmitter<*>> = mutableMapOf()
+    private val callbackClassMap: MutableMap<Long, Class<*>> = mutableMapOf()      // RequestId to Callback Class
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isCounting = false
@@ -45,7 +45,7 @@ open abstract class BaseRxClient(context: Context) {
         if (!isConnected) {
             return
         }
-        context.unbindService(mServiceConnection)
+        context.unbindService(serviceConnection)
         onDisconnect()
     }
 
@@ -53,7 +53,7 @@ open abstract class BaseRxClient(context: Context) {
         return 0L
     }
 
-    private val mServiceConnection = object : ServiceConnection {
+    private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             synchronized(this@BaseRxClient) {
                 Timber.d("onServiceConnected.name = $name")
@@ -73,25 +73,25 @@ open abstract class BaseRxClient(context: Context) {
                 } else {
                     isConnected = true
                     // Handle the the requests which sent before connected to service
-                    for (request in pendingRequestSet) {
+                    for (request in observableRequestSet) {
                         var requestId: Long
                         try {
                             requestId = iBaseInterface.requestObservable(uuidString, request.requestContent,
                                     request.requestClass.name, request.callbackClass.name, request.methodName)
                         } catch (e: RemoteException) {
-                            request.subject.onError(e)
+                            request.emitter.onError(e)
                             return
                         }
                         if (requestId < 0) {
                             val e = RuntimeException("onServiceConnected: requestId < 0 failed")
-                            request.subject.onError(e)
+                            request.emitter.onError(e)
                             return
                         }
-                        subjectMap[requestId] = request.subject
-                        classMap[requestId] = request.callbackClass
+                        observableEmitterMap[requestId] = request.emitter
+                        callbackClassMap[requestId] = request.callbackClass
                         checkAutoDisconnect()
                     }
-                    pendingRequestSet.clear()
+                    observableRequestSet.clear()
                 }
                 // Request disconnect when is connecting
                 if (isRequestDisconnect) {
@@ -110,23 +110,23 @@ open abstract class BaseRxClient(context: Context) {
     }
 
     private fun onDisconnect() {
-        Timber.d("onDisconnect.pendingRequestSet.size = ${pendingRequestSet.size}")
-        Timber.d("onDisconnect.subjectMap.size = ${subjectMap.size}")
+        Timber.d("onDisconnect.observableRequestSet.size = ${observableRequestSet.size}")
+        Timber.d("onDisconnect.observableEmitterMap.size = ${observableEmitterMap.size}")
 
         uuidString = UUID.randomUUID().toString()
         isConnecting = false
         isConnected = false
-        for (request in pendingRequestSet) {
+        for (request in observableRequestSet) {
             val e = RuntimeException("Service disconnected.")
-            request.subject.onError(e)
+            request.emitter.onError(e)
         }
-        for (subject in subjectMap.values) {
+        for (emitter in observableEmitterMap.values) {
             val e = RuntimeException("Service disconnected.")
-            subject.onError(e)
+            emitter.onError(e)
         }
-        subjectMap.clear()
-        classMap.clear()
-        pendingRequestSet.clear()
+        observableRequestSet.clear()
+        callbackClassMap.clear()
+        observableEmitterMap.clear()
         mainHandler.removeCallbacks(mAutoDisconnectRunnable)
     }
 
@@ -134,7 +134,7 @@ open abstract class BaseRxClient(context: Context) {
         override fun onCallback(requestId: Long, state: Int, callbackContent: String?) {
             synchronized(this@BaseRxClient) {
                 Timber.d("onCallback = $requestId, $state, $callbackContent")
-                val callbackClass = classMap[requestId]
+                val callbackClass = callbackClassMap[requestId]
 
                 if (callbackClass != null) {
                     emitCallback(requestId, state, callbackContent, callbackClass)
@@ -146,74 +146,71 @@ open abstract class BaseRxClient(context: Context) {
     }
 
     private fun <C> emitCallback(requestId: Long, state: Int, callbackContent: String?, callbackClass: Class<C>) {
-        val subject = subjectMap[requestId]
-        if (subject == null) {
+        val emitter = observableEmitterMap[requestId]
+        if (emitter == null) {
             Timber.e("emitCallback: can not find subject")
             return
         }
-        val subject2: Subject<C> = subject as Subject<C>
+        val emitter2: ObservableEmitter<C> = emitter as ObservableEmitter<C>
         when (state) {
             BaseConstant.STATE_NEXT -> {
                 val callback: C = gson.fromJson(callbackContent, callbackClass)
-                subject2.onNext(callback)
+                emitter2.onNext(callback)
             }
             BaseConstant.STATE_ERROR -> {
-                subject2.onError(RuntimeException(callbackContent))
-                subjectMap.remove(requestId)
-                classMap.remove(requestId)
+                emitter2.onError(RuntimeException(callbackContent))
+                observableEmitterMap.remove(requestId)
+                callbackClassMap.remove(requestId)
                 checkAutoDisconnect()
             }
             BaseConstant.STATE_COMPLETE -> {
-                subject2.onComplete()
-                subjectMap.remove(requestId)
-                classMap.remove(requestId)
+                emitter2.onComplete()
+                observableEmitterMap.remove(requestId)
+                callbackClassMap.remove(requestId)
                 checkAutoDisconnect()
             }
         }
     }
 
-    @Synchronized
     protected fun <R, C> requestObservable(request: R,
                                            requestClass: Class<R>, callbackClass: Class<C>,
                                            methodName: String = BaseConstant.NULL_METHOD): Observable<C> {
-        if (isConnected && !isConnecting) {
-            // Is connected, send the request directly
-            var content = gson.toJson(request)
-            var requestId = -1L
-            try {
-                requestId = iBaseInterface.requestObservable(uuidString, content,
-                        requestClass.name, callbackClass.name, methodName)
-            } catch (e: RemoteException) {
-                e.printStackTrace()
-                return Observable.error(e)
+        return Observable.create { emitter ->
+            synchronized(this@BaseRxClient) {
+                if (isConnected && !isConnecting) {
+                    // Is connected, send the request directly
+                    var content = gson.toJson(request)
+                    var requestId: Long
+                    try {
+                        requestId = iBaseInterface.requestObservable(uuidString, content,
+                                requestClass.name, callbackClass.name, methodName)
+                    } catch (e: RemoteException) {
+                        e.printStackTrace()
+                        emitter.onError(e)
+                        return@create
+                    }
+                    if (requestId < 0) {
+                        emitter.onError(RuntimeException("requestObservable failed: requestId < 0"))
+                        return@create
+                    }
+                    observableEmitterMap[requestId] = emitter
+                    callbackClassMap[requestId] = callbackClass
+                    checkAutoDisconnect()
+                    Timber.d("$requestId , ${observableEmitterMap.containsKey(requestId)}")
+                } else {
+                    // Is not connected, add request to pendingRequestSet
+                    var content = gson.toJson(request)
+
+                    observableRequestSet.add(ObservableRequest(emitter, content, requestClass, callbackClass, methodName))
+                    if (!isConnecting) {
+                        Timber.d("connect")
+                        isConnecting = true
+                        var intent = Intent()
+                        intent.setClassName(getPackageName(), getClassName())
+                        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+                    }
+                }
             }
-            if (requestId < 0) {
-                return Observable.error(RuntimeException("requestObservable failed: requestId < 0"))
-            }
-            var subject: Subject<C> = PublishSubject.create<C>()
-            Timber.d("$content, $requestId, $subject")
-            subjectMap.put(requestId, subject)
-            classMap.put(requestId, callbackClass)
-            checkAutoDisconnect()
-            Timber.d("$requestId , ${subjectMap.containsKey(requestId)}")
-
-            return subject
-        } else {
-            // Is not connected, add request to pendingRequestSet
-            var content = gson.toJson(request)
-            var subject: Subject<C> = PublishSubject.create<C>()
-
-            pendingRequestSet.add(PendingRequest(subject, content, requestClass, callbackClass, methodName))
-
-            if (!isConnecting) {
-                Timber.d("connect")
-                isConnecting = true
-                var intent = Intent()
-                intent.setClassName(getPackageName(), getClassName())
-                context.bindService(intent, mServiceConnection, Context.BIND_AUTO_CREATE)
-            }
-
-            return subject
         }
     }
 
@@ -221,7 +218,7 @@ open abstract class BaseRxClient(context: Context) {
         if (getAutoDisconnectTime() < 0) {
             return
         }
-        if (subjectMap.isEmpty()) {
+        if (observableEmitterMap.isEmpty()) {
             if (!isCounting) {
                 if (getAutoDisconnectTime() == 0L) {
                     disconnect()

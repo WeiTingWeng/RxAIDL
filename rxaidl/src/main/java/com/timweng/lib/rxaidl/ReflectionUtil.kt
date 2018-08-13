@@ -1,15 +1,23 @@
 package com.timweng.lib.rxaidl
 
 import io.reactivex.Observable
+import timber.log.Timber
 import java.lang.reflect.Method
 import java.lang.reflect.ParameterizedType
 
 internal class ReflectionUtil {
+
     companion object {
+        private val cacheMethodMap: MutableMap<String, Method> = mutableMapOf()
+
         fun <T, R, C> findObservableMethod(targetClass: Class<T>,
                                            requestClass: Class<R>,
                                            callbackClass: Class<C>,
                                            methodName: String): Method? {
+            val key = targetClass.canonicalName + requestClass.canonicalName + callbackClass.canonicalName + methodName
+            if (cacheMethodMap.containsKey(key)) {
+                return cacheMethodMap[key]
+            }
 
             if (!methodName.equals(BaseConstant.NULL_METHOD)) {
                 var tempMethod: Method? = null
@@ -30,6 +38,7 @@ internal class ReflectionUtil {
                 if (genericReturnType != null && genericReturnType is ParameterizedType) {
                     val arguments = genericReturnType.actualTypeArguments
                     if (arguments != null && arguments.size == 1 && arguments[0].toString().equals(callbackClass.toString())) {
+                        cacheMethodMap[key] = tempMethod
                         return tempMethod
                     }
                 }
@@ -58,6 +67,10 @@ internal class ReflectionUtil {
                         break
                     }
                 }
+            }
+
+            if (returnMethod != null) {
+                cacheMethodMap[key] = returnMethod
             }
             return returnMethod
         }

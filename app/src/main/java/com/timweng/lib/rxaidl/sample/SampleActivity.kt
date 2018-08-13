@@ -15,9 +15,10 @@ class SampleActivity : AppCompatActivity() {
         setContentView(R.layout.activity_sample)
 
         val request = SampleRequest("Observer0", 3)
+        val observable = mClient.requestSample(request)
 
         requestButton.setOnClickListener {
-            mClient.requestSample(request).subscribe(
+            observable.subscribe(
                     { n -> Timber.d("$n") },
                     { e -> Timber.d("onError: $e") },
                     { Timber.d("onComplete") })

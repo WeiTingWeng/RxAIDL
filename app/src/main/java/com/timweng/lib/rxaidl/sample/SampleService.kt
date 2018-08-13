@@ -1,5 +1,6 @@
 package com.timweng.lib.rxaidl.sample
 
+import android.support.annotation.Keep
 import com.timweng.lib.rxaidl.BaseRxService
 import com.timweng.lib.rxaidl.sample.model.SampleCallback
 import com.timweng.lib.rxaidl.sample.model.SampleRequest
@@ -7,6 +8,7 @@ import io.reactivex.Observable
 import io.reactivex.ObservableOnSubscribe
 
 class SampleService : BaseRxService() {
+    @Keep
     fun requestTestObservable(request: SampleRequest): Observable<SampleCallback> {
         val callback = SampleCallback()
         callback.requestName = request.name
