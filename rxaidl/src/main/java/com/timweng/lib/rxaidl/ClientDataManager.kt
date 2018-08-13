@@ -37,7 +37,7 @@ internal class ClientDataManager {
     fun clearClient() {
         for (clientData: ClientData in clientId2ClientMap.values) {
             for (disObserver in clientData.disposableMap.values) {
-                if (disObserver != null && !disObserver.isDisposed) {
+                if (!disObserver.isDisposed) {
                     disObserver.dispose()
                 }
             }

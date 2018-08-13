@@ -13,7 +13,7 @@ import io.reactivex.schedulers.Schedulers
 import timber.log.Timber
 import java.lang.Exception
 
-open abstract class BaseRxService : Service() {
+abstract class BaseRxService : Service() {
     private companion object {
         var requestCount = 0L
     }
@@ -95,8 +95,9 @@ open abstract class BaseRxService : Service() {
         }
 
         var request = parseToObject(requestContent, requestClass)
-        var observable: Observable<C>? = null
+        var observable: Observable<C>?
         try {
+            @Suppress("UNCHECKED_CAST")
             observable = targetMethod.invoke(this, request) as Observable<C>
         } catch (e: Exception) {
             e.printStackTrace()

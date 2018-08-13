@@ -15,7 +15,7 @@ import io.reactivex.subjects.Subject
 import timber.log.Timber
 import java.util.*
 
-open abstract class BaseRxClient(context: Context) {
+abstract class BaseRxClient(context: Context) {
     private val context: Context = context
     private var gson = Gson()
 
@@ -152,6 +152,7 @@ open abstract class BaseRxClient(context: Context) {
             Timber.e("emitCallback: can not find subject")
             return
         }
+        @Suppress("UNCHECKED_CAST")
         val emitter2: ObservableEmitter<C> = emitter as ObservableEmitter<C>
         when (state) {
             BaseConstant.STATE_NEXT -> {

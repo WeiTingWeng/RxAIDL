@@ -20,7 +20,7 @@ internal class ReflectionUtil {
             }
 
             if (!methodName.equals(BaseConstant.NULL_METHOD)) {
-                var tempMethod: Method? = null
+                var tempMethod: Method?
                 try {
                     tempMethod = targetClass.getMethod(methodName, requestClass)
                 } catch (e: NoSuchMethodException) {
