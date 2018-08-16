@@ -1,6 +1,6 @@
 package com.timweng.lib.rxaidl
 
-import io.reactivex.observers.DisposableObserver
+import io.reactivex.disposables.Disposable
 import timber.log.Timber
 
 internal class ClientDataManager {
@@ -24,9 +24,9 @@ internal class ClientDataManager {
         if (clientData != null && !clientData.disposableMap.isEmpty()) {
             for (requestId in clientData.disposableMap.keys) {
                 requestId2ClientMap.remove(requestId)
-                val disObserver = clientData.disposableMap.remove(requestId)
-                if (disObserver != null && !disObserver.isDisposed) {
-                    disObserver.dispose()
+                val disposable = clientData.disposableMap.remove(requestId)
+                if (disposable != null && !disposable.isDisposed) {
+                    disposable.dispose()
                 }
             }
             clientData.disposableMap.clear()
@@ -50,7 +50,7 @@ internal class ClientDataManager {
         return clientId2ClientMap[id]
     }
 
-    fun addRequestId(requestId: Long, clientId: String, disObserver: DisposableObserver<*>): Boolean {
+    fun addRequestId(requestId: Long, clientId: String, disposable: Disposable): Boolean {
         Timber.d("addRequestId: $requestId to $clientId")
 
         if (requestId2ClientMap.containsKey(requestId)) {
@@ -60,7 +60,7 @@ internal class ClientDataManager {
         val clientData = clientId2ClientMap[clientId]
         if (clientData != null) {
             requestId2ClientMap[requestId] = clientData
-            clientData.disposableMap[requestId] = disObserver
+            clientData.disposableMap[requestId] = disposable
         } else {
             Timber.e("addRequestId error: clientId not exist")
             return false
@@ -77,9 +77,9 @@ internal class ClientDataManager {
 
         var clientData = requestId2ClientMap.remove(requestId)
         if (clientData != null) {
-            val disObserver = clientData.disposableMap.remove(requestId)
-            if (disObserver != null && !disObserver.isDisposed) {
-                disObserver.dispose()
+            val disposable = clientData.disposableMap.remove(requestId)
+            if (disposable != null && !disposable.isDisposed) {
+                disposable.dispose()
             }
         } else {
             Timber.e("removeRequestId error: can not find clientData")
@@ -90,6 +90,6 @@ internal class ClientDataManager {
 
     fun getClientByRequestId(requestId: Long): ClientData? {
         Timber.d("getClientByRequestId: $requestId")
-        return requestId2ClientMap.get(requestId)
+        return requestId2ClientMap[requestId]
     }
 }

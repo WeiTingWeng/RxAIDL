@@ -6,12 +6,14 @@ import android.os.IBinder
 import android.os.RemoteException
 import com.google.gson.Gson
 import io.reactivex.Observable
+import io.reactivex.Observer
 import io.reactivex.Scheduler
 import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.observers.DisposableObserver
+import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 import timber.log.Timber
 import java.lang.Exception
+
 
 abstract class BaseRxService : Service() {
     private companion object {
@@ -38,7 +40,6 @@ abstract class BaseRxService : Service() {
     }
 
     private val binder = object : IBaseInterface.Stub() {
-
         override fun register(clientId: String, callback: IBaseCallback): Boolean {
             synchronized(this@BaseRxService) {
                 Timber.d("register: $clientId, $callback")
@@ -72,6 +73,14 @@ abstract class BaseRxService : Service() {
                     Timber.e("requestObservable failed: Can not find clientData")
                 }
                 return -1
+            }
+        }
+
+        override fun dispose(clientId: String?, requestId: Long): Boolean {
+            Timber.d("dispose1 CID = $clientId, RID = $requestId")
+            synchronized(this@BaseRxService) {
+                Timber.d("dispose: CID = $clientId, RID = $requestId")
+                return clientDataManager.removeRequestId(requestId)
             }
         }
 
@@ -117,57 +126,69 @@ abstract class BaseRxService : Service() {
             Timber.e("connectObservable failed: clientData = $clientData, callback = $clientData")
             return false
         }
-        var observer = object : DisposableObserver<C>() {
+
+        val observer = object : Observer<C> {
+            override fun onSubscribe(disposable: Disposable) {
+                synchronized(this@BaseRxService) {
+                    clientDataManager.addRequestId(requestId, clientData.id, disposable)
+                }
+            }
 
             override fun onComplete() {
+                var isOk = true
+                try {
+                    callback.onCallback(requestId, BaseConstant.STATE_COMPLETE, null)
+                } catch (e: RemoteException) {
+                    // connect to client error: remove the client
+                    e.printStackTrace()
+                    isOk = false
+                }
                 synchronized(this@BaseRxService) {
-                    try {
-                        callback.onCallback(requestId, BaseConstant.STATE_COMPLETE, null)
-                        clientDataManager.removeRequestId(requestId)
-                    } catch (e: RemoteException) {
-                        // connect to client error: remove the client
-                        e.printStackTrace()
-                        Timber.e("onComplete error: remove client ${clientData.id}")
+                    clientDataManager.removeRequestId(requestId)
+                    if (!isOk) {
                         clientDataManager.removeClient(clientData.id)
                     }
                 }
             }
 
             override fun onNext(t: C) {
-                synchronized(this@BaseRxService) {
-                    try {
-                        callback.onCallback(requestId, BaseConstant.STATE_NEXT, gson.toJson(t))
-                    } catch (e: RemoteException) {
-                        // connect to client error: remove the client
-                        e.printStackTrace()
-                        Timber.e("onNext error: remove client ${clientData.id}")
+                var isOk = true
+                try {
+                    callback.onCallback(requestId, BaseConstant.STATE_NEXT, gson.toJson(t))
+                } catch (e: RemoteException) {
+                    // connect to client error: remove the client
+                    e.printStackTrace()
+                    isOk = false
+                }
+
+                if (!isOk) {
+                    synchronized(this@BaseRxService) {
                         clientDataManager.removeClient(clientData.id)
                     }
                 }
             }
 
             override fun onError(e: Throwable) {
+                var isOk = true
+                try {
+                    callback.onCallback(requestId, BaseConstant.STATE_ERROR, e.message)
+                } catch (e: RemoteException) {
+                    // connect to client error: remove the client
+                    e.printStackTrace()
+                    Timber.e("onError error: remove client ${clientData.id}: ${e.message}")
+                    isOk = false
+                }
                 synchronized(this@BaseRxService) {
-                    try {
-                        callback.onCallback(requestId, BaseConstant.STATE_ERROR, e.message)
-                        clientDataManager.removeRequestId(requestId)
-                    } catch (e: RemoteException) {
-                        // connect to client error: remove the client
-                        e.printStackTrace()
-                        Timber.e("onError error: remove client ${clientData.id}")
+                    clientDataManager.removeRequestId(requestId)
+                    if (!isOk) {
                         clientDataManager.removeClient(clientData.id)
                     }
                 }
             }
         }
 
-        val isOk = clientDataManager.addRequestId(requestId, clientData.id, observer)
-        if (isOk) {
-            observable.subscribeOn(subscribeScheduler).observeOn(AndroidSchedulers.mainThread()).subscribe(observer)
-            return true
-        }
-
-        return false
+        observable.subscribeOn(subscribeScheduler).observeOn(AndroidSchedulers.mainThread()).subscribe(observer)
+        return true
     }
 
     private fun <C> parseToObject(content: String, contentClass: Class<C>): C {
