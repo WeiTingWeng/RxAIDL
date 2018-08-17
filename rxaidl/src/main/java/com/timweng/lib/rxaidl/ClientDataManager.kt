@@ -7,11 +7,11 @@ internal class ClientDataManager {
     private val clientId2ClientMap: MutableMap<String, ClientData> = mutableMapOf()
     private val requestId2ClientMap: MutableMap<Long, ClientData> = mutableMapOf()
 
-    fun addClient(id: String, callback: IBaseCallback): Boolean {
+    fun addClient(id: String, version: Long, callback: IBaseCallback): Boolean {
         if (clientId2ClientMap.containsKey(id)) {
             return false
         }
-        var clientData = ClientData(id, callback)
+        var clientData = ClientData(id, version, callback)
         clientId2ClientMap[id] = clientData
         return true
     }

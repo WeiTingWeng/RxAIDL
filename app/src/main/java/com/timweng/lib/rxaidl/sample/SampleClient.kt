@@ -7,11 +7,16 @@ import com.timweng.lib.rxaidl.sample.model.SampleRequest
 import io.reactivex.Observable
 
 class SampleClient : BaseRxClient {
+
     constructor(context: Context) : super(context)
 
     companion object {
         const val SERVICE_PACKAGE_NAME: String = "com.timweng.lib.rxaidl.sample"
         const val SERVICE_CLASSNAME: String = "com.timweng.lib.rxaidl.sample.SampleService"
+    }
+
+    override fun getVersion(): Long {
+        return 1L
     }
 
     override fun getPackageName(): String {
@@ -23,6 +28,7 @@ class SampleClient : BaseRxClient {
     }
 
     fun requestSample(request: SampleRequest): Observable<SampleCallback> {
-        return requestObservable(request, SampleRequest::class.java, SampleCallback::class.java)
+        return requestObservable(request, SampleRequest::class.java, SampleCallback::class.java,
+                minServiceVersion = 1, maxServiceVersion = 10)
     }
 }

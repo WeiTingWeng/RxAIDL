@@ -34,7 +34,7 @@ class SampleActivity : AppCompatActivity() {
         disposeButton.setOnClickListener { disposable.dispose() }
 
         disconnectButton.setOnClickListener {
-            client.disposeAll()
+            client.disconnect()
         }
     }
 

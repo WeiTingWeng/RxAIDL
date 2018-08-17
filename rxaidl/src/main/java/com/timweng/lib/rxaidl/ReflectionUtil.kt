@@ -1,5 +1,6 @@
 package com.timweng.lib.rxaidl
 
+import com.timweng.lib.rxaidl.annotation.RequestRequirement
 import io.reactivex.Observable
 import timber.log.Timber
 import java.lang.reflect.Method
@@ -13,8 +14,9 @@ internal class ReflectionUtil {
         fun <T, R, C> findObservableMethod(targetClass: Class<T>,
                                            requestClass: Class<R>,
                                            callbackClass: Class<C>,
-                                           methodName: String): Method? {
-            val key = targetClass.canonicalName + requestClass.canonicalName + callbackClass.canonicalName + methodName
+                                           methodName: String,
+                                           clientVersion: Long): Method? {
+            val key = targetClass.canonicalName + requestClass.canonicalName + callbackClass.canonicalName + methodName + clientVersion
             if (cacheMethodMap.containsKey(key)) {
                 return cacheMethodMap[key]
             }
@@ -26,6 +28,16 @@ internal class ReflectionUtil {
                 } catch (e: NoSuchMethodException) {
                     e.printStackTrace()
                     return null
+                }
+
+                val requirement = tempMethod.getAnnotation(RequestRequirement::class.java)
+                if (requirement != null) {
+                    Timber.e("requirement.minClientVersion = ${requirement.minClientVersion}")
+                    Timber.e("requirement.maxClientVersion = ${requirement.maxClientVersion}")
+
+                    if (clientVersion < requirement.minClientVersion || requirement.maxClientVersion < clientVersion) {
+                        return null
+                    }
                 }
 
                 var returnType = tempMethod.returnType
@@ -58,6 +70,15 @@ internal class ReflectionUtil {
                 }
                 if (returnType == null || !returnType.isAssignableFrom(Observable::class.java)) {
                     continue
+                }
+
+                val requirement = method.getAnnotation(RequestRequirement::class.java)
+                if (requirement != null) {
+                    Timber.e("requirement.minClientVersion = ${requirement.minClientVersion}")
+                    Timber.e("requirement.maxClientVersion = ${requirement.maxClientVersion}")
+                    if (clientVersion < requirement.minClientVersion || requirement.maxClientVersion < clientVersion) {
+                        continue
+                    }
                 }
 
                 if (genericReturnType != null && genericReturnType is ParameterizedType) {

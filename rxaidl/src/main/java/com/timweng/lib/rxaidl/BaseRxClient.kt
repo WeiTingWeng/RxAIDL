@@ -7,10 +7,14 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.RemoteException
 import com.google.gson.Gson
+import com.timweng.lib.rxaidl.exception.ClientNotSupportException
+import com.timweng.lib.rxaidl.exception.ServiceDisconnectedException
+import com.timweng.lib.rxaidl.exception.ServiceNotSupportException
 import io.reactivex.Observable
 import io.reactivex.ObservableEmitter
 import io.reactivex.ObservableOnSubscribe
 import timber.log.Timber
+import java.lang.Exception
 import java.util.*
 
 abstract class BaseRxClient(context: Context) {
@@ -23,17 +27,16 @@ abstract class BaseRxClient(context: Context) {
     private var isConnected = false
     private var isRequestDisconnect = false
 
+    private var serviceVersion: Long = -1
+
     private val pendingObservableRequests: MutableSet<ObservableRequest> = mutableSetOf()
     private val rid2ObservableEmitterMap: MutableMap<Long, ObservableEmitter<*>> = mutableMapOf()
     private val observableEmitter2RidMap: MutableMap<ObservableEmitter<*>, Long> = mutableMapOf()
     private val rid2callbackClassMap: MutableMap<Long, Class<*>> = mutableMapOf()      // RequestId to Callback Class
 
+    protected abstract fun getVersion(): Long
     protected abstract fun getPackageName(): String
     protected abstract fun getClassName(): String
-
-    fun disposeAll() {
-        disconnect()
-    }
 
     @Synchronized
     private fun connect() {
@@ -50,7 +53,7 @@ abstract class BaseRxClient(context: Context) {
     }
 
     @Synchronized
-    private fun disconnect() {
+    fun disconnect() {
         if (isConnecting) {
             Timber.d("disconnect pending")
             isRequestDisconnect = true
@@ -73,16 +76,14 @@ abstract class BaseRxClient(context: Context) {
         isConnecting = false
         isConnected = false
         for (request in pendingObservableRequests) {
-            val e = RuntimeException("Service disconnected.")
             if (!request.emitter.isDisposed) {
-                request.emitter.onError(e)
+                request.emitter.onError(ServiceDisconnectedException())
             }
         }
         for (entry in rid2ObservableEmitterMap.entries) {
-            val e = RuntimeException("Service disconnected.")
             if (!entry.value.isDisposed) {
                 observableEmitter2RidMap.remove(entry.value)
-                entry.value.onError(e)
+                entry.value.onError(ServiceDisconnectedException())
             }
         }
 
@@ -108,22 +109,24 @@ abstract class BaseRxClient(context: Context) {
 
                 iBaseInterface = IBaseInterface.Stub.asInterface(service)
 
-                var isOk = false
-                try {
-                    isOk = iBaseInterface.register(uuidString, mIBaseCallback)
+                serviceVersion = try {
+                    iBaseInterface.register(uuidString, getVersion(), "", iBaseCallback)
                 } catch (e: RemoteException) {
                     e.printStackTrace()
+                    -1
                 }
-                Timber.d("onServiceConnected.isOk = $isOk")
-                if (!isOk) {
+                Timber.d("onServiceConnected.serviceVersion = $serviceVersion")
+                if (serviceVersion < 0) {
                     disconnect()
                 } else {
                     // Handle the the requests which sent before connected to service
                     for (request in pendingObservableRequests) {
                         requestObservableFromAidl(request.emitter, request.requestContent,
-                                request.requestClass, request.callbackClass, request.methodName)
+                                request.requestClass, request.callbackClass,
+                                request.methodName, request.minVersion, request.maxVersion)
                     }
                     pendingObservableRequests.clear()
+                    checkRequests()
                 }
             }
         }
@@ -136,7 +139,7 @@ abstract class BaseRxClient(context: Context) {
         }
     }
 
-    private val mIBaseCallback = object : IBaseCallback.Stub() {
+    private val iBaseCallback = object : IBaseCallback.Stub() {
         override fun onCallback(requestId: Long, state: Int, callbackContent: String?) {
             synchronized(this@BaseRxClient) {
                 Timber.d("onCallback = $requestId, $state, $callbackContent")
@@ -172,36 +175,48 @@ abstract class BaseRxClient(context: Context) {
                 val e = rid2ObservableEmitterMap.remove(requestId)
                 observableEmitter2RidMap.remove(e)
                 rid2callbackClassMap.remove(requestId)
-                emitter2.onError(RuntimeException(callbackContent))
-                checkAutoDisconnect()
+
+                if (callbackContent != null) {
+                    emitter2.onError(Exception(callbackContent))
+                } else {
+                    emitter2.onError(Exception("Unknown error"))
+                }
+
+                checkRequests()
             }
             BaseConstant.STATE_COMPLETE -> {
                 val e = rid2ObservableEmitterMap.remove(requestId)
                 observableEmitter2RidMap.remove(e)
                 rid2callbackClassMap.remove(requestId)
                 emitter2.onComplete()
-                checkAutoDisconnect()
+                checkRequests()
             }
         }
     }
 
     protected fun <R, C> requestObservable(request: R,
                                            requestClass: Class<R>, callbackClass: Class<C>,
-                                           methodName: String = BaseConstant.NULL_METHOD): Observable<C> {
+                                           methodName: String = BaseConstant.NULL_METHOD,
+                                           minServiceVersion: Long = 0,
+                                           maxServiceVersion: Long = Long.MAX_VALUE): Observable<C> {
         val oos = ObservableOnSubscribe<C> { emitter ->
             synchronized(this@BaseRxClient) {
                 if (isConnected && !isConnecting) {
                     // Is connected, send the request directly
                     var content = gson.toJson(request)
 
-                    requestObservableFromAidl(emitter, content, requestClass, callbackClass, methodName)
+                    requestObservableFromAidl(emitter, content, requestClass, callbackClass,
+                            methodName, minServiceVersion, maxServiceVersion)
                 } else {
                     // Is not connected, add request to pendingRequestSet
                     var content = gson.toJson(request)
 
-                    pendingObservableRequests.add(ObservableRequest(emitter, content, requestClass, callbackClass, methodName))
+                    pendingObservableRequests.add(ObservableRequest(emitter, content,
+                            requestClass, callbackClass,
+                            methodName, minServiceVersion, maxServiceVersion))
                     connect()
                 }
+                checkRequests()
                 return@ObservableOnSubscribe
             }
         }
@@ -235,13 +250,19 @@ abstract class BaseRxClient(context: Context) {
                                 iterate2.remove()
                             }
                         }
-                        checkAutoDisconnect()
+                        checkRequests()
                     }
                 }
     }
 
     private fun requestObservableFromAidl(emitter: ObservableEmitter<*>, requestContent: String,
-                                          requestClass: Class<*>, callbackClass: Class<*>, methodName: String?): Long {
+                                          requestClass: Class<*>, callbackClass: Class<*>,
+                                          methodName: String?, minVersion: Long, maxVersion: Long): Boolean {
+        if (serviceVersion < minVersion || maxVersion < serviceVersion) {
+            emitter.onError(ServiceNotSupportException(serviceVersion, minVersion, maxVersion))
+            return false
+        }
+
         var requestId: Long
         try {
             requestId = iBaseInterface.requestObservable(uuidString, requestContent,
@@ -249,23 +270,26 @@ abstract class BaseRxClient(context: Context) {
         } catch (e: RemoteException) {
             e.printStackTrace()
             emitter.onError(e)
-            return -1
+            return false
         }
         if (requestId < 0) {
-            val e = RuntimeException("onServiceConnected: requestId < 0 failed")
+            val e = when (requestId) {
+                BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT -> ClientNotSupportException()
+                else -> RuntimeException("Failed to request Observable form service.")
+            }
             emitter.onError(e)
-            return -1
+            return false
         }
         rid2ObservableEmitterMap[requestId] = emitter
         observableEmitter2RidMap[emitter] = requestId
         rid2callbackClassMap[requestId] = callbackClass
-        checkAutoDisconnect()
+        checkRequests()
 
-        Timber.d("requestObservableFromAidl success: request = $requestId , ${rid2ObservableEmitterMap.containsKey(requestId)}")
-        return requestId
+        Timber.d("requestObservableFromAidl success: request = $requestId")
+        return true
     }
 
-    private fun checkAutoDisconnect() {
+    private fun checkRequests() {
         if (rid2ObservableEmitterMap.isEmpty() && pendingObservableRequests.isEmpty()) {
             disconnect()
         }
