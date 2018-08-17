@@ -2,7 +2,6 @@ package com.timweng.lib.rxaidl
 
 import com.timweng.lib.rxaidl.annotation.RequestRequirement
 import io.reactivex.Observable
-import timber.log.Timber
 import java.lang.reflect.Method
 import java.lang.reflect.ParameterizedType
 
@@ -32,9 +31,6 @@ internal class ReflectionUtil {
 
                 val requirement = tempMethod.getAnnotation(RequestRequirement::class.java)
                 if (requirement != null) {
-                    Timber.e("requirement.minClientVersion = ${requirement.minClientVersion}")
-                    Timber.e("requirement.maxClientVersion = ${requirement.maxClientVersion}")
-
                     if (clientVersion < requirement.minClientVersion || requirement.maxClientVersion < clientVersion) {
                         return null
                     }
@@ -74,8 +70,6 @@ internal class ReflectionUtil {
 
                 val requirement = method.getAnnotation(RequestRequirement::class.java)
                 if (requirement != null) {
-                    Timber.e("requirement.minClientVersion = ${requirement.minClientVersion}")
-                    Timber.e("requirement.maxClientVersion = ${requirement.maxClientVersion}")
                     if (clientVersion < requirement.minClientVersion || requirement.maxClientVersion < clientVersion) {
                         continue
                     }

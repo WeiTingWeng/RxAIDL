@@ -8,11 +8,12 @@ import com.timweng.lib.rxaidl.sample.model.SampleRequest
 import io.reactivex.Observable
 import io.reactivex.ObservableOnSubscribe
 import io.reactivex.schedulers.Schedulers
+import timber.log.Timber
 
 class SampleService : BaseRxService() {
 
     override fun getVersion(): Long {
-        return 11L
+        return 1L
     }
 
     @Keep
@@ -23,7 +24,12 @@ class SampleService : BaseRxService() {
 
         return Observable.create<SampleCallback>(ObservableOnSubscribe { e ->
             while (callback.number < request.count) {
-                e.onNext(callback.copy())
+                if (!e.isDisposed) {
+                    Timber.d("onNext: $callback")
+                    e.onNext(callback.copy())
+                } else {
+                    break
+                }
                 callback.number++
 
                 try {
