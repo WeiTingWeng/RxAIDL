@@ -39,6 +39,7 @@ abstract class BaseRxService : Service() {
     }
 
     private val binder = object : IBaseInterface.Stub() {
+
         override fun register(clientId: String, version: Long, option: String, callback: IBaseCallback): Long {
             synchronized(this@BaseRxService) {
                 Timber.d("register: $clientId, $version, $callback")
@@ -50,10 +51,10 @@ abstract class BaseRxService : Service() {
             }
         }
 
-        override fun requestObservable(clientId: String, requestContent: String,
-                                       requestClass: String, callbackClass: String, methodName: String): Long {
+        override fun request(clientId: String, requestType: Int, requestContent: String,
+                             requestClass: String, callbackClass: String, methodName: String): Long {
             synchronized(this@BaseRxService) {
-                Timber.d("request: $clientId, $requestContent")
+                Timber.d("request: $clientId, $requestType, $requestContent")
                 Timber.d("request: $requestClass, $callbackClass, $methodName")
 
                 var clientData = clientDataManager.getClient(clientId)
@@ -64,7 +65,14 @@ abstract class BaseRxService : Service() {
                         return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT
                     }
                     requestCount++
-                    val isOk = onRequestObservable(requestCount, clientData, requestContent, requestClass, cbClass, methodName)
+                    val isOk = when (requestType) {
+                        BaseConstant.REQUEST_TYPE_OBSERVABLE -> {
+                            onRequestObservable(requestCount, clientData, requestContent, requestClass, cbClass, methodName)
+                        }
+                        else -> {
+                            false
+                        }
+                    }
                     if (!isOk) {
                         Timber.e("requestObservable failed: onRequestObservable error")
                         return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT
@@ -119,11 +127,6 @@ abstract class BaseRxService : Service() {
 
     private fun <C> connectObservable(requestId: Long, clientData: ClientData, observable: Observable<C>): Boolean {
         val callback = clientData.callback
-        if (clientData == null || callback == null) {
-            Timber.e("connectObservable failed: clientData = $clientData, callback = $clientData")
-            return false
-        }
-
         val observer = object : Observer<C> {
             override fun onSubscribe(disposable: Disposable) {
                 synchronized(this@BaseRxService) {

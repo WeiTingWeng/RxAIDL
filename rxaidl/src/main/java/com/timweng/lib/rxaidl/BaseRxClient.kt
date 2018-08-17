@@ -265,7 +265,7 @@ abstract class BaseRxClient(context: Context) {
 
         var requestId: Long
         try {
-            requestId = iBaseInterface.requestObservable(uuidString, requestContent,
+            requestId = iBaseInterface.request(uuidString, BaseConstant.REQUEST_TYPE_OBSERVABLE, requestContent,
                     requestClass.name, callbackClass.name, methodName)
         } catch (e: RemoteException) {
             e.printStackTrace()
