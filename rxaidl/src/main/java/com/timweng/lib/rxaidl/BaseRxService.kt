@@ -62,7 +62,7 @@ abstract class BaseRxService : Service() {
                     val cbClass: Class<*>? = ReflectionUtil.getClassFromName(callbackClass)
                     if (cbClass == null) {
                         Timber.e("requestObservable failed: Can not find callback Class")
-                        return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT
+                        return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORTED
                     }
                     requestCount++
                     val isOk = when (requestType) {
@@ -75,13 +75,13 @@ abstract class BaseRxService : Service() {
                     }
                     if (!isOk) {
                         Timber.e("requestObservable failed: onRequestObservable error")
-                        return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT
+                        return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORTED
                     }
                     return requestCount
                 } else {
                     Timber.e("requestObservable failed: Can not find clientData")
                 }
-                return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT
+                return BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORTED
             }
         }
 

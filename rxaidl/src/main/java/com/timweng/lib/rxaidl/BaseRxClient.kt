@@ -4,12 +4,14 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.os.IBinder
 import android.os.RemoteException
 import com.google.gson.Gson
-import com.timweng.lib.rxaidl.exception.ClientNotSupportException
+import com.timweng.lib.rxaidl.exception.ClientNotSupportedException
 import com.timweng.lib.rxaidl.exception.ServiceDisconnectedException
-import com.timweng.lib.rxaidl.exception.ServiceNotSupportException
+import com.timweng.lib.rxaidl.exception.ServiceNotExistedException
+import com.timweng.lib.rxaidl.exception.ServiceNotSupportedException
 import io.reactivex.Observable
 import io.reactivex.ObservableEmitter
 import io.reactivex.ObservableOnSubscribe
@@ -44,9 +46,32 @@ abstract class BaseRxClient(context: Context) {
         if (!isConnected && !isConnecting) {
             Timber.d("connect")
             isConnecting = true
+
+            var connectException: Exception? = null
+
             var intent = Intent()
             intent.setClassName(getPackageName(), getClassName())
-            context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+
+            // Check service is existed or not
+            if (isServiceExisted(intent)) {
+                try {
+                    context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+                } catch (se: SecurityException) {
+                    se.printStackTrace()
+                    connectException = se
+                }
+            } else {
+                connectException = ServiceNotExistedException()
+            }
+
+            // If have connect exception emit exception to all requests
+            if (connectException != null) {
+                for (request in pendingObservableRequests) {
+                    request.emitter.onError(connectException)
+                }
+                pendingObservableRequests.clear()
+                isConnecting = false
+            }
         } else {
             Timber.d("connect fail: isConnected = $isConnected, isConnecting = $isConnecting")
         }
@@ -259,7 +284,7 @@ abstract class BaseRxClient(context: Context) {
                                           requestClass: Class<*>, callbackClass: Class<*>,
                                           methodName: String?, minVersion: Long, maxVersion: Long): Boolean {
         if (serviceVersion < minVersion || maxVersion < serviceVersion) {
-            emitter.onError(ServiceNotSupportException(serviceVersion, minVersion, maxVersion))
+            emitter.onError(ServiceNotSupportedException(serviceVersion, minVersion, maxVersion))
             return false
         }
 
@@ -274,7 +299,7 @@ abstract class BaseRxClient(context: Context) {
         }
         if (requestId < 0) {
             val e = when (requestId) {
-                BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORT -> ClientNotSupportException()
+                BaseConstant.REQUEST_ERROR_CLIENT_NOT_SUPPORTED -> ClientNotSupportedException()
                 else -> RuntimeException("Failed to request Observable form service.")
             }
             emitter.onError(e)
@@ -293,5 +318,12 @@ abstract class BaseRxClient(context: Context) {
         if (rid2ObservableEmitterMap.isEmpty() && pendingObservableRequests.isEmpty()) {
             disconnect()
         }
+    }
+
+    private fun isServiceExisted(intent: Intent): Boolean {
+        val list = context.packageManager.queryIntentServices(intent,
+                PackageManager.MATCH_DEFAULT_ONLY)
+
+        return list.size > 0
     }
 }
