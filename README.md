@@ -4,7 +4,7 @@
 An easy method for providing the reactive interface between client and service
 
 ## Concept
-<img src="/art/concept.jpg" width="800" height="400">
+<img src="/art/concept.png" width="800" height="400">
 
 ## How to use IPC
 
