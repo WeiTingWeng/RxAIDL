@@ -6,7 +6,7 @@ An easy method for providing the reactive interface between client and service
 ## Concept
 <img src="/art/concept.png" width="800" height="400">
 
-## How to use IPC
+## How to use RxAIDL
 
 #### 1. Create Client which extends BaseRxClient
 ```kotlin
